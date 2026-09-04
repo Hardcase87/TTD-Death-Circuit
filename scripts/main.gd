@@ -18,8 +18,7 @@ const PEARL = Color("f5f2e9")
 
 const HORIZON_TEX = preload("res://assets/environment/titan-city-horizon.png")
 const GATE_TEX = preload("res://assets/environment/ttd-checkpoint-gate.png")
-const CAR_IDLE = preload("res://assets/vehicles/mayhem-idle.webp")
-const CAR_BOOST = preload("res://assets/vehicles/mayhem-boost.webp")
+const CAR_MUTANT = preload("res://assets/vehicles/mutant-maniac-idle.png")
 const SIGN_TEXTURES = [
 	preload("res://assets/signs/billboard-death-circuit.webp"),
 	preload("res://assets/signs/billboard-skull-juice.webp"),
@@ -245,11 +244,11 @@ func _process(delta: float) -> void:
 	if abs(road_x) > 0.94:
 		speed = move_toward(speed, MAX_SPEED * 0.50, 190.0 * delta)
 
-	racing_step(delta)
+	_racing_step(delta)
 	queue_redraw()
 
 
-func tracing_step(delta: float) -> void:
+func _racing_step(delta: float) -> void:
 	elapsed += delta
 	district_banner = max(0.0, district_banner - delta)
 	race_distance += speed * ROAD_SCALE * delta
@@ -469,19 +468,86 @@ func _draw_car(view: Vector2) -> void:
 		and nitro > 0.0
 		and speed > 120.0
 	)
-	var tex: Texture2D = CAR_BOOST if boosting else CAR_IDLE
+	var tex: Texture2D = CAR_MUTANT
 	var width = clamp(view.x * 0.205, 170.0, 292.0)
 	var height = width * float(tex.get_height()) / float(tex.get_width())
 	var car_x = view.x * 0.5 + road_x * view.x * 0.27
-	var car_y = view.y * 0.925
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.25)
+	var suspension_bob = sin(race_distance * 0.043) * speed_ratio * 2.6
+	var car_y = view.y * 0.925 + suspension_bob
 	if boosting:
 		draw_circle(
 			Vector2(car_x, car_y - height * 0.05), width * 0.38, Color(1.0, 0.1, 0.62, 0.16)
 		)
 	var rect = Rect2(car_x - width * 0.5, car_y - height, width, height)
-	draw_set_transform(rect.get_center(), steer_visual * -0.035, Vector2.ONE)
+	var road_vibration = sin(race_distance * 0.071) * speed_ratio * 0.004
+	draw_set_transform(rect.get_center(), steer_visual * -0.045 + road_vibration, Vector2.ONE)
+	if boosting:
+		_draw_mutant_boost(width, height)
 	draw_texture_rect(tex, Rect2(-rect.size * 0.5, rect.size), false)
+	_draw_spinning_wheels(width, height, speed_ratio)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_spinning_wheels(width: float, height: float, speed_ratio: float) -> void:
+	if state != "race" or speed < 8.0:
+		return
+	var spin = fposmod(race_distance * 0.022, 1.0)
+	var tire_centers = [-width * 0.445, width * 0.445]
+	var tire_half_width = width * 0.043
+	var tire_top = -height * 0.015
+	var tire_bottom = height * 0.43
+	for side_index in range(tire_centers.size()):
+		var tire_x: float = tire_centers[side_index]
+		for tread_index in range(7):
+			var phase = fposmod(float(tread_index) / 7.0 + spin, 1.0)
+			var tread_y = lerp(tire_top, tire_bottom, phase)
+			var edge_fade = sin(phase * PI)
+			var tread_color = NEON_CYAN if (tread_index + side_index) % 2 == 0 else NEON_PINK
+			tread_color.a = (0.10 + speed_ratio * 0.34) * edge_fade
+			draw_line(
+				Vector2(tire_x - tire_half_width, tread_y - height * 0.007),
+				Vector2(tire_x + tire_half_width, tread_y + height * 0.007),
+				tread_color,
+				max(1.0, width * 0.006),
+				true
+			)
+		var contact_y = height * 0.47
+		var streak = width * (0.035 + speed_ratio * 0.07)
+		draw_line(
+			Vector2(tire_x - streak, contact_y),
+			Vector2(tire_x + streak, contact_y),
+			Color(0.25, 0.88, 1.0, 0.10 + speed_ratio * 0.18),
+			max(1.0, width * 0.008),
+			true
+		)
+
+
+func _draw_mutant_boost(width: float, height: float) -> void:
+	var pulse = 0.86 + sin(elapsed * 34.0) * 0.14
+	var flame_length = height * (0.34 + pulse * 0.12)
+	var nozzles = [-width * 0.205, width * 0.205]
+	for nozzle_x in nozzles:
+		var origin = Vector2(nozzle_x, height * 0.25)
+		var outer = PackedVector2Array(
+			[
+				origin + Vector2(-width * 0.055, 0.0),
+				origin + Vector2(-width * 0.025, flame_length * 0.56),
+				origin + Vector2(0.0, flame_length),
+				origin + Vector2(width * 0.025, flame_length * 0.56),
+				origin + Vector2(width * 0.055, 0.0)
+			]
+		)
+		draw_colored_polygon(outer, Color(1.0, 0.08, 0.62, 0.45))
+		var core = PackedVector2Array(
+			[
+				origin + Vector2(-width * 0.024, 0.0),
+				origin + Vector2(0.0, flame_length * 0.72),
+				origin + Vector2(width * 0.024, 0.0)
+			]
+		)
+		draw_colored_polygon(core, Color(0.96, 0.94, 1.0, 0.90))
+		draw_circle(origin, width * 0.050 * pulse, Color(0.45, 0.10, 1.0, 0.36))
 
 
 func _draw_hud(view: Vector2) -> void:
