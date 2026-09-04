@@ -1,5 +1,7 @@
 # TTD Death Circuit — Xogot Overkill Pass
 
+Compatibility revision 1.1: conservative GDScript declarations for Xogot's embedded parser.
+
 An original TTD arcade road racer built as a Godot 4 project for import into Xogot.
 
 ## Import into Xogot
