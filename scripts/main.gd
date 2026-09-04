@@ -148,16 +148,16 @@ func _build_world_objects() -> void:
 		var length: float = sections[index].length
 		if index > 0:
 			world_objects.append({"z": start, "type": "gate", "side": 0.0, "section": index})
-		for slot in range(9):
+		for slot in range(18):
 			var side = -1.0 if (slot + index) % 2 == 0 else 1.0
 			var kind = "billboard"
-			if slot in [2, 6]:
+			if slot % 4 == 1:
 				kind = "chevron"
-			elif slot == 4:
+			elif slot % 4 == 2:
 				kind = "barricade"
 			world_objects.append(
 				{
-					"z": start + length * (0.08 + float(slot) * 0.098),
+					"z": start + length * (0.035 + float(slot) * 0.053),
 					"type": kind,
 					"side": side,
 					"asset": (slot + index * 2) % SIGN_TEXTURES.size(),
@@ -320,6 +320,7 @@ func _draw() -> void:
 	var view = get_viewport_rect().size
 	_draw_background(view)
 	_draw_road(view)
+	_draw_speed_effects(view)
 	_draw_world_objects(view)
 	_draw_car(view)
 	_draw_hud(view)
@@ -349,17 +350,6 @@ func _draw_background(view: Vector2) -> void:
 	else:
 		draw_texture_rect(current_horizon, horizon_rect, false, tint)
 	draw_rect(Rect2(0.0, 0.0, view.x, horizon_h), Color(section.accent, 0.055))
-	var horizon = view.y * 0.43
-	for layer in range(3):
-		var layer_y = horizon + 16.0 + layer * 22.0
-		var shift = fposmod(race_distance * (0.008 + layer * 0.006), 150.0)
-		var color = Color(0.025 + layer * 0.01, 0.018, 0.06, 0.88 - layer * 0.16)
-		for i in range(-2, 13):
-			var x = i * 125.0 - shift
-			var height = 35.0 + fmod(float(i * 47 + current_section * 31 + layer * 19), 105.0)
-			draw_rect(Rect2(x, layer_y - height, 70.0 + layer * 12.0, height), color)
-			if layer == 2:
-				draw_rect(Rect2(x + 10.0, layer_y - height + 12.0, 4.0, 4.0), section.accent)
 
 
 func _draw_road(view: Vector2) -> void:
@@ -421,6 +411,36 @@ func _draw_road(view: Vector2) -> void:
 				draw_colored_polygon(line, Color(1.0, 0.93, 0.74, 0.78))
 
 
+func _draw_speed_effects(view: Vector2) -> void:
+	if state != "race" or speed < 65.0:
+		return
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.28)
+	var accent: Color = sections[current_section].accent
+	var vanishing = Vector2(_road_point(DRAW_DISTANCE).center, view.y * 0.43)
+	for i in range(30):
+		var phase = fposmod(float(i) * 0.173 + race_distance * 0.00135, 1.0)
+		var depth = pow(phase, 2.1)
+		var y = lerp(view.y * 0.445, view.y * 0.965, depth)
+		var scatter = fposmod(float(i * 41 + current_section * 17), 100.0) / 100.0
+		var x: float
+		if i % 2 == 0:
+			x = lerp(view.x * 0.01, view.x * 0.34, scatter)
+		else:
+			x = lerp(view.x * 0.66, view.x * 0.99, scatter)
+		var endpoint = Vector2(x, y)
+		var direction = (endpoint - vanishing).normalized()
+		var streak_length = lerp(2.0, view.y * 0.12, depth) * speed_ratio
+		var streak_color = accent
+		streak_color.a = (0.035 + depth * 0.25) * speed_ratio
+		draw_line(
+			endpoint - direction * streak_length,
+			endpoint,
+			streak_color,
+			max(1.0, depth * 3.2),
+			true
+		)
+
+
 func _draw_world_objects(view: Vector2) -> void:
 	var visible = []
 	for object in world_objects:
@@ -453,18 +473,18 @@ func _draw_projected_object(object: Dictionary, distance: float, _view: Vector2)
 			)
 		return
 	var side: float = float(object.side)
-	var x = point.center + side * point.half * 1.32
+	var x = point.center + side * point.half * 1.16
 	var tex: Texture2D
-	var base_width = 255.0
+	var base_width = 410.0
 	if kind == "billboard":
 		tex = SIGN_TEXTURES[int(object.asset)]
 	elif kind == "chevron":
 		tex = CHEVRON_TEX
-		base_width = 150.0
+		base_width = 215.0
 	else:
 		tex = BARRICADE_TEX
-		base_width = 170.0
-	var width = max(8.0, base_width * pow(closeness, 1.42))
+		base_width = 245.0
+	var width = max(10.0, base_width * pow(closeness, 1.18))
 	var height = width * float(tex.get_height()) / float(tex.get_width())
 	var rect = Rect2(x - width * 0.5, point.y - height, width, height)
 	draw_texture_rect(tex, rect, false)
@@ -494,17 +514,23 @@ func _draw_car(view: Vector2) -> void:
 	var tex: Texture2D = CAR_MUTANT
 	var width = clamp(view.x * 0.205, 170.0, 292.0)
 	var height = width * float(tex.get_height()) / float(tex.get_width())
-	var car_x = view.x * 0.5 + road_x * view.x * 0.27
+	var turn_amount = clamp(steer_visual, -1.0, 1.0)
+	var control = _control_state()
+	var drifting = bool(control.brake) and abs(turn_amount) > 0.15 and speed > 150.0
+	var turn_force = turn_amount * (1.48 if drifting else 1.0)
+	var car_x = view.x * 0.5 + road_x * view.x * 0.27 + turn_force * width * 0.035
 	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.25)
 	var suspension_bob = sin(race_distance * 0.043) * speed_ratio * 2.6
-	var car_y = view.y * 0.925 + suspension_bob
+	var speed_rattle = sin(race_distance * 0.129) * max(0.0, speed_ratio - 0.72) * 1.8
+	var car_y = view.y * 0.925 + suspension_bob + speed_rattle
 	if boosting:
 		draw_circle(
 			Vector2(car_x, car_y - height * 0.05), width * 0.38, Color(1.0, 0.1, 0.62, 0.16)
 		)
 	var rect = Rect2(car_x - width * 0.5, car_y - height, width, height)
-	var road_vibration = sin(race_distance * 0.071) * speed_ratio * 0.004
-	draw_set_transform(rect.get_center(), steer_visual * -0.045 + road_vibration, Vector2.ONE)
+	var road_vibration = sin(race_distance * 0.071) * speed_ratio * 0.006
+	var turn_scale = Vector2(1.0 - abs(turn_force) * 0.075, 1.0 + abs(turn_force) * 0.018)
+	draw_set_transform(rect.get_center(), turn_force * -0.092 + road_vibration, turn_scale)
 	if boosting:
 		_draw_mutant_boost(width, height)
 	draw_texture_rect(tex, Rect2(-rect.size * 0.5, rect.size), false)
