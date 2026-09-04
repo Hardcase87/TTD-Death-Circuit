@@ -16,7 +16,14 @@ const NEON_CYAN = Color("39d7ff")
 const HOT_YELLOW = Color("ffe53b")
 const PEARL = Color("f5f2e9")
 
-const HORIZON_TEX = preload("res://assets/environment/titan-city-horizon.png")
+const DISTRICT_HORIZONS = [
+	preload("res://assets/environment/district-vhs-quarter.webp"),
+	preload("res://assets/environment/district-financial.webp"),
+	preload("res://assets/environment/district-nutrition.webp"),
+	preload("res://assets/environment/district-military.webp"),
+	preload("res://assets/environment/district-titan-heights.webp"),
+	preload("res://assets/environment/district-titan-run.webp")
+]
 const GATE_TEX = preload("res://assets/environment/ttd-checkpoint-gate.png")
 const CAR_MUTANT = preload("res://assets/vehicles/mutant-maniac-idle.png")
 const SIGN_TEXTURES = [
@@ -105,7 +112,9 @@ var nitro = 100.0
 var elapsed = 0.0
 var current_section = 0
 var previous_section = -1
+var transition_from_section = 0
 var district_banner = 0.0
+var background_transition = 0.0
 var state = "title"
 
 var touch_points = {}
@@ -251,6 +260,7 @@ func _process(delta: float) -> void:
 func _racing_step(delta: float) -> void:
 	elapsed += delta
 	district_banner = max(0.0, district_banner - delta)
+	background_transition = max(0.0, background_transition - delta)
 	race_distance += speed * ROAD_SCALE * delta
 	if race_distance >= track_length:
 		race_distance = track_length
@@ -258,6 +268,9 @@ func _racing_step(delta: float) -> void:
 		state = "finish"
 	current_section = int(_track_info(race_distance).index)
 	if current_section != previous_section:
+		transition_from_section = max(previous_section, 0)
+		if previous_section >= 0:
+			background_transition = 1.0
 		previous_section = current_section
 		district_banner = 2.5
 
@@ -323,8 +336,18 @@ func _draw_background(view: Vector2) -> void:
 	var info = _track_info(race_distance)
 	var section: Dictionary = info.section
 	var horizon_h = view.y * 0.54
-	var tint: Color = section.accent.lerp(Color.WHITE, 0.74)
-	draw_texture_rect(HORIZON_TEX, Rect2(0.0, 0.0, view.x, horizon_h), false, tint)
+	var horizon_width = view.x * 1.08
+	var horizon_x = -view.x * 0.04 - road_x * view.x * 0.012
+	var horizon_rect = Rect2(horizon_x, 0.0, horizon_width, horizon_h)
+	var current_horizon: Texture2D = DISTRICT_HORIZONS[current_section]
+	var tint: Color = Color.WHITE.lerp(section.accent, 0.07)
+	if background_transition > 0.0 and transition_from_section != current_section:
+		var old_horizon: Texture2D = DISTRICT_HORIZONS[transition_from_section]
+		draw_texture_rect(old_horizon, horizon_rect, false, Color.WHITE)
+		var reveal = 1.0 - clamp(background_transition, 0.0, 1.0)
+		draw_texture_rect(current_horizon, horizon_rect, false, Color(tint, reveal))
+	else:
+		draw_texture_rect(current_horizon, horizon_rect, false, tint)
 	draw_rect(Rect2(0.0, 0.0, view.x, horizon_h), Color(section.accent, 0.055))
 	var horizon = view.y * 0.43
 	for layer in range(3):
@@ -728,5 +751,7 @@ func _start_race() -> void:
 	elapsed = 0.0
 	current_section = 0
 	previous_section = -1
+	transition_from_section = 0
+	background_transition = 0.0
 	district_banner = 2.5
 	state = "race"
