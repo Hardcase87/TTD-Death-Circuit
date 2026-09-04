@@ -1,29 +1,39 @@
-# TTD Death Circuit
+# TTD Death Circuit — Xogot Overkill Pass
 
-**Genesis Finish V8** — a standalone browser racer set across six districts of Titan City.
+An original TTD arcade road racer built as a Godot 4 project for import into Xogot.
 
-## Play
+## Import into Xogot
 
-Open `index.html` in a modern browser, or serve this directory with any static web server.
+1. Download and extract the ZIP.
+2. In Xogot, choose **Import Project**.
+3. Select this folder's `project.godot` file.
+4. Open `main.tscn` and press Run.
 
-### Controls
+The project uses the Godot 4 Compatibility renderer and has no plugins or external dependencies.
 
-- Keyboard: arrow keys or WASD
-- Nitro: Shift or Space
-- Touch: on-screen steering, throttle, brake/drift and nitro controls
+## Controls
 
-## Current build
+- **Keyboard:** WASD or arrow keys; Space/Shift for nitro.
+- **Touch:** lower-left steering pad; lower-right throttle, brake and nitro controls.
 
-- Six district changeovers with unique palettes, skyline treatments and route signs
-- Eighteen checkpoints and twenty opponents distributed across the circuit
-- Rival collisions, near misses, nitro takedowns, timer and final run summary
-- Responsive desktop and touch controls
-- Self-contained static build with no external runtime dependencies
+## The Overkill pass
 
-## Structure
+- One authored 90,000-unit Titan City circuit: approximately three minutes at full attack.
+- Six district stages with distinct sky treatment, weather, scenery rhythm and road palette.
+- Proper road curvature, hills, lane markings, shoulders, drift grip and off-road slowdown.
+- Live top-right route map showing the complete track, district markers and player position.
+- Permanent signs installed at fixed world coordinates.
+- Image-based drive-through checkpoint gates at every district boundary.
+- Layered generated Titan City horizon and original TTD gate artwork.
+- Enemies intentionally removed for this handling-and-presentation pass.
+- Dynamic synthesized engine tone, responsive HUD, restart flow and mobile landscape layout.
 
-- `index.html` — complete game code and interface
-- `assets/death-circuit-concept.png` — title/concept art
-- `assets/death-circuit-v8/` — vehicles, scenery, billboards and road props
+## Project structure
+
+- `main.tscn` — launch scene
+- `scripts/main.gd` — racer, projection, track, UI, input and audio
+- `assets/environment/` — generated horizon and checkpoint gate
+- `assets/vehicles/` — Mayhem player vehicle
+- `assets/signs/` — fixed roadside billboards and hazards
 
 Part of the Tactical Terror Division / Titan City universe.
