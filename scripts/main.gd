@@ -1,12 +1,12 @@
 extends Node2D
 
-const MAX_SPEED = 540.0
-const NITRO_SPEED = 690.0
-const ACCEL = 165.0
+const MAX_SPEED = 680.0
+const NITRO_SPEED = 840.0
+const ACCEL = 218.0
 const BRAKE_POWER = 310.0
-const COAST = 52.0
-const DRAW_DISTANCE = 7200.0
-const ROAD_SLICES = 92
+const COAST = 38.0
+const DRAW_DISTANCE = 8400.0
+const ROAD_SLICES = 104
 const ROAD_SCALE = 1.0
 const MAP_SAMPLES = 220
 
@@ -25,7 +25,13 @@ const DISTRICT_HORIZONS = [
 	preload("res://assets/environment/district-titan-run.webp")
 ]
 const GATE_TEX = preload("res://assets/environment/ttd-checkpoint-gate.png")
-const CAR_MUTANT = preload("res://assets/vehicles/mutant-maniac-idle.png")
+const CAR_POSES = [
+	preload("res://assets/vehicles/mutant-maniac-hard-left.png"),
+	preload("res://assets/vehicles/mutant-maniac-soft-left.png"),
+	preload("res://assets/vehicles/mutant-maniac-center.png"),
+	preload("res://assets/vehicles/mutant-maniac-soft-right.png"),
+	preload("res://assets/vehicles/mutant-maniac-hard-right.png")
+]
 const SIGN_TEXTURES = [
 	preload("res://assets/signs/billboard-death-circuit.webp"),
 	preload("res://assets/signs/billboard-skull-juice.webp"),
@@ -35,6 +41,53 @@ const SIGN_TEXTURES = [
 ]
 const CHEVRON_TEX = preload("res://assets/signs/road-chevron.webp")
 const BARRICADE_TEX = preload("res://assets/signs/road-barricade.webp")
+
+# Each Vector3 is local section progress, signed corner force and hill force.
+# Long holds create committed arcade bends instead of generic sine-wave wandering.
+const ROAD_KEYS = [
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.10, 0.00, 0.04),
+		Vector3(0.23, 0.78, 0.02), Vector3(0.37, 0.92, -0.16),
+		Vector3(0.50, -0.72, 0.12), Vector3(0.64, -0.82, 0.04),
+		Vector3(0.77, 0.42, -0.28), Vector3(0.89, 0.00, 0.10),
+		Vector3(1.00, 0.00, 0.00)
+	],
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.12, -0.48, 0.04),
+		Vector3(0.27, -0.96, -0.14), Vector3(0.41, -0.30, 0.20),
+		Vector3(0.54, 0.72, 0.05), Vector3(0.68, 1.02, -0.20),
+		Vector3(0.82, 0.26, 0.27), Vector3(0.92, 0.00, 0.04),
+		Vector3(1.00, 0.00, 0.00)
+	],
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.11, 0.62, -0.05),
+		Vector3(0.24, 1.08, 0.18), Vector3(0.38, 0.18, 0.34),
+		Vector3(0.51, -0.94, 0.06), Vector3(0.65, -0.52, -0.30),
+		Vector3(0.79, 0.88, -0.08), Vector3(0.91, 0.00, 0.16),
+		Vector3(1.00, 0.00, 0.00)
+	],
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.10, -0.58, 0.10),
+		Vector3(0.24, -1.12, 0.32), Vector3(0.39, -0.20, -0.18),
+		Vector3(0.52, 0.86, -0.32), Vector3(0.67, 0.98, 0.18),
+		Vector3(0.80, -0.66, 0.28), Vector3(0.92, 0.00, -0.05),
+		Vector3(1.00, 0.00, 0.00)
+	],
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.12, 0.38, 0.18),
+		Vector3(0.26, 0.82, 0.48), Vector3(0.40, -0.44, -0.24),
+		Vector3(0.54, -1.05, 0.36), Vector3(0.69, 0.54, 0.50),
+		Vector3(0.82, 0.90, -0.34), Vector3(0.92, 0.00, 0.08),
+		Vector3(1.00, 0.00, 0.00)
+	],
+	[
+		Vector3(0.00, 0.00, 0.00), Vector3(0.11, -0.36, -0.08),
+		Vector3(0.24, -0.84, 0.20), Vector3(0.38, 0.70, -0.18),
+		Vector3(0.52, 1.12, 0.14), Vector3(0.66, -0.76, -0.24),
+		Vector3(0.80, -0.32, 0.18), Vector3(0.91, 0.00, -0.04),
+		Vector3(1.00, 0.00, 0.00)
+	]
+]
 
 var sections = [
 	{
@@ -115,6 +168,8 @@ var previous_section = -1
 var transition_from_section = 0
 var district_banner = 0.0
 var background_transition = 0.0
+var boost_visual = 0.0
+var camera_impact = 0.0
 var state = "title"
 
 var touch_points = {}
@@ -148,16 +203,22 @@ func _build_world_objects() -> void:
 		var length: float = sections[index].length
 		if index > 0:
 			world_objects.append({"z": start, "type": "gate", "side": 0.0, "section": index})
-		for slot in range(18):
-			var side = -1.0 if (slot + index) % 2 == 0 else 1.0
+		var prop_count = 11
+		var usable_start = 1750.0
+		var usable_length = length - 3200.0
+		for slot in range(prop_count):
+			var side_pattern = (slot * 3 + index * 2) % 7
+			var side = -1.0 if side_pattern < 3 else 1.0
 			var kind = "billboard"
-			if slot % 4 == 1:
+			if slot % 3 == 1:
 				kind = "chevron"
-			elif slot % 4 == 2:
+			elif slot % 3 == 2:
 				kind = "barricade"
+			var spacing = usable_length / float(prop_count - 1)
+			var stagger = float((slot * 137 + index * 79) % 260) - 130.0
 			world_objects.append(
 				{
-					"z": start + length * (0.035 + float(slot) * 0.053),
+					"z": start + usable_start + float(slot) * spacing + stagger,
 					"type": kind,
 					"side": side,
 					"asset": (slot + index * 2) % SIGN_TEXTURES.size(),
@@ -165,6 +226,11 @@ func _build_world_objects() -> void:
 				}
 			)
 	world_objects.append({"z": track_length - 450.0, "type": "gate", "side": 0.0, "section": 5})
+	world_objects.sort_custom(_sort_world_objects)
+
+
+func _sort_world_objects(a: Dictionary, b: Dictionary) -> bool:
+	return float(a.z) < float(b.z)
 
 
 func _build_minimap() -> void:
@@ -202,12 +268,14 @@ func _fill_engine_audio() -> void:
 	if audio_playback == null:
 		return
 	var frames = audio_playback.get_frames_available()
-	var rpm = 44.0 + speed * 0.31
+	var gear_band = fposmod(speed, 145.0)
+	var rpm = 48.0 + gear_band * 0.62 + speed * 0.055
 	for i in range(frames):
 		audio_phase = fmod(audio_phase + rpm / engine_mix_rate, 1.0)
-		var wave = sin(audio_phase * TAU) * 0.10
-		wave += sin(audio_phase * TAU * 2.01) * 0.045
-		wave += sin(audio_phase * TAU * 0.5) * 0.025
+		var wave = sin(audio_phase * TAU) * 0.095
+		wave += sin(audio_phase * TAU * 2.01) * 0.052
+		wave += sin(audio_phase * TAU * 0.49) * 0.030
+		wave += sin(audio_phase * TAU * 5.03) * 0.018 * boost_visual
 		if state != "race":
 			wave *= 0.32
 		audio_playback.push_frame(Vector2(wave, wave))
@@ -227,6 +295,10 @@ func _process(delta: float) -> void:
 	)
 	var keyboard_boost = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_SHIFT)
 	var boosting: bool = (keyboard_boost or controls.nitro) and nitro > 0.0 and speed > 120.0
+	if boosting and boost_visual < 0.05:
+		camera_impact = 1.0
+	boost_visual = move_toward(boost_visual, 1.0 if boosting else 0.0, delta * 4.5)
+	camera_impact = max(0.0, camera_impact - delta * 2.8)
 	var keyboard_steer = (
 		float(Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT))
 		- float(Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT))
@@ -237,7 +309,8 @@ func _process(delta: float) -> void:
 
 	var target_speed = NITRO_SPEED if boosting else MAX_SPEED
 	if throttle:
-		speed = move_toward(speed, target_speed, ACCEL * delta * (1.35 if speed < 120.0 else 1.0))
+		var launch_power = 1.45 if speed < 145.0 else 1.0
+		speed = move_toward(speed, target_speed, ACCEL * delta * launch_power)
 	else:
 		speed = move_toward(speed, 0.0, COAST * delta)
 	if braking:
@@ -247,8 +320,11 @@ func _process(delta: float) -> void:
 	else:
 		nitro = min(100.0, nitro + 4.0 * delta)
 
-	var grip = 1.75 if braking else 1.15
-	road_x += steer * grip * delta * (0.45 + speed / MAX_SPEED)
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.25)
+	var grip = 1.82 if braking else 1.22
+	road_x += steer * grip * delta * (0.38 + speed_ratio)
+	var road_force = float(_track_info(race_distance).curve) * speed_ratio * speed_ratio
+	road_x -= road_force * delta * 0.105
 	road_x = clamp(road_x, -1.32, 1.32)
 	if abs(road_x) > 0.94:
 		speed = move_toward(speed, MAX_SPEED * 0.50, 190.0 * delta)
@@ -284,10 +360,19 @@ func _track_info(z: float) -> Dictionary:
 			break
 	var section: Dictionary = sections[index]
 	var local = (distance - section_starts[index]) / float(section.length)
-	var curve_wave = sin(local * TAU * (2.0 + float(index % 3))) * 0.58
-	curve_wave += sin(local * TAU * 0.5 + float(index)) * 0.34
-	var curve = float(section.curve) + curve_wave
-	var hill = sin(local * TAU * (1.0 + float(index % 2))) * float(section.hill)
+	var keys: Array = ROAD_KEYS[index]
+	var curve = 0.0
+	var hill = 0.0
+	for key_index in range(1, keys.size()):
+		var previous_key: Vector3 = keys[key_index - 1]
+		var next_key: Vector3 = keys[key_index]
+		if local <= next_key.x:
+			var key_range = max(0.001, next_key.x - previous_key.x)
+			var blend = clamp((local - previous_key.x) / key_range, 0.0, 1.0)
+			blend = blend * blend * (3.0 - 2.0 * blend)
+			curve = lerp(previous_key.y, next_key.y, blend)
+			hill = lerp(previous_key.z, next_key.z, blend)
+			break
 	return {"index": index, "local": local, "curve": curve, "hill": hill, "section": section}
 
 
@@ -304,15 +389,20 @@ func _integrated_curve(distance: float) -> float:
 
 func _road_point(distance: float) -> Dictionary:
 	var view = get_viewport_rect().size
-	var horizon = view.y * 0.43
-	var bottom = view.y * 0.965
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.22)
+	var horizon = view.y * lerp(0.445, 0.397, speed_ratio)
+	var bottom = view.y * 1.015
 	var u = sqrt(clamp(distance / DRAW_DISTANCE, 0.0, 1.0))
 	var info = _track_info(min(race_distance + distance, track_length - 1.0))
-	var y = lerp(bottom, horizon, pow(u, 0.72))
-	y -= float(info.hill) * sin(u * PI) * view.y * 0.22
-	var half_width = lerp(view.x * 0.47, view.x * 0.012, pow(u, 0.78))
+	var y = lerp(bottom, horizon, pow(u, lerp(0.76, 0.66, speed_ratio)))
+	y -= float(info.hill) * sin(u * PI) * view.y * 0.255
+	var near_width = view.x * (0.475 + speed_ratio * 0.035 + boost_visual * 0.018)
+	var half_width = lerp(near_width, view.x * 0.008, pow(u, 0.76))
 	var bend = _integrated_curve(distance) * pow(distance / DRAW_DISTANCE, 1.35)
-	var center = view.x * 0.5 - road_x * view.x * 0.255 + bend * view.x * 0.49
+	var steering_camera = steer_visual * speed_ratio * view.x * 0.020
+	var corner_look = float(info.curve) * speed_ratio * view.x * 0.018
+	var center = view.x * 0.5 - road_x * view.x * 0.255 + bend * view.x * 0.43
+	center += steering_camera + corner_look
 	return {"center": center, "y": y, "half": half_width, "u": u, "info": info}
 
 
@@ -321,6 +411,7 @@ func _draw() -> void:
 	_draw_background(view)
 	_draw_road(view)
 	_draw_speed_effects(view)
+	_draw_roadside_flow(view)
 	_draw_world_objects(view)
 	_draw_car(view)
 	_draw_hud(view)
@@ -336,10 +427,13 @@ func _draw() -> void:
 func _draw_background(view: Vector2) -> void:
 	var info = _track_info(race_distance)
 	var section: Dictionary = info.section
-	var horizon_h = view.y * 0.54
-	var horizon_width = view.x * 1.08
-	var horizon_x = -view.x * 0.04 - road_x * view.x * 0.012
-	var horizon_rect = Rect2(horizon_x, 0.0, horizon_width, horizon_h)
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.22)
+	var horizon_h = view.y * lerp(0.555, 0.515, speed_ratio)
+	var horizon_width = view.x * 1.14
+	var corner_pan = float(info.curve) * view.x * 0.020
+	var horizon_x = -view.x * 0.07 - road_x * view.x * 0.018 - corner_pan
+	var horizon_y = -speed_ratio * view.y * 0.010
+	var horizon_rect = Rect2(horizon_x, horizon_y, horizon_width, horizon_h)
 	var current_horizon: Texture2D = DISTRICT_HORIZONS[current_section]
 	var tint: Color = Color.WHITE.lerp(section.accent, 0.07)
 	if background_transition > 0.0 and transition_from_section != current_section:
@@ -354,7 +448,7 @@ func _draw_background(view: Vector2) -> void:
 
 func _draw_road(view: Vector2) -> void:
 	var current = _track_info(race_distance)
-	draw_rect(Rect2(0.0, view.y * 0.42, view.x, view.y * 0.58), current.section.ground)
+	draw_rect(Rect2(0.0, view.y * 0.39, view.x, view.y * 0.61), current.section.ground)
 	for i in range(ROAD_SLICES - 1, -1, -1):
 		var near_d = DRAW_DISTANCE * pow(float(i) / float(ROAD_SLICES), 2.0)
 		var far_d = DRAW_DISTANCE * pow(float(i + 1) / float(ROAD_SLICES), 2.0)
@@ -409,6 +503,15 @@ func _draw_road(view: Vector2) -> void:
 					]
 				)
 				draw_colored_polygon(line, Color(1.0, 0.93, 0.74, 0.78))
+		if i % 7 == 0 and near.y > view.y * 0.53:
+			var center_glint_width = max(0.7, near.half * 0.006)
+			draw_line(
+				Vector2(near.center - center_glint_width, near.y),
+				Vector2(near.center + center_glint_width, near.y),
+				Color(current.section.accent, 0.25),
+				max(1.0, center_glint_width),
+				true
+			)
 
 
 func _draw_speed_effects(view: Vector2) -> void:
@@ -416,9 +519,10 @@ func _draw_speed_effects(view: Vector2) -> void:
 		return
 	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.28)
 	var accent: Color = sections[current_section].accent
-	var vanishing = Vector2(_road_point(DRAW_DISTANCE).center, view.y * 0.43)
-	for i in range(30):
-		var phase = fposmod(float(i) * 0.173 + race_distance * 0.00135, 1.0)
+	var far_point = _road_point(DRAW_DISTANCE)
+	var vanishing = Vector2(far_point.center, far_point.y)
+	for i in range(42):
+		var phase = fposmod(float(i) * 0.137 + race_distance * 0.00175, 1.0)
 		var depth = pow(phase, 2.1)
 		var y = lerp(view.y * 0.445, view.y * 0.965, depth)
 		var scatter = fposmod(float(i * 41 + current_section * 17), 100.0) / 100.0
@@ -429,7 +533,7 @@ func _draw_speed_effects(view: Vector2) -> void:
 			x = lerp(view.x * 0.66, view.x * 0.99, scatter)
 		var endpoint = Vector2(x, y)
 		var direction = (endpoint - vanishing).normalized()
-		var streak_length = lerp(2.0, view.y * 0.12, depth) * speed_ratio
+		var streak_length = lerp(2.0, view.y * 0.17, depth) * speed_ratio
 		var streak_color = accent
 		streak_color.a = (0.035 + depth * 0.25) * speed_ratio
 		draw_line(
@@ -441,66 +545,96 @@ func _draw_speed_effects(view: Vector2) -> void:
 		)
 
 
+func _draw_roadside_flow(view: Vector2) -> void:
+	if state != "race":
+		return
+	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.24)
+	var accent: Color = sections[current_section].accent
+	var spacing = 315.0
+	var first_distance = spacing - fposmod(race_distance, spacing)
+	for marker_index in range(27):
+		var distance = first_distance + float(marker_index) * spacing
+		if distance < 45.0 or distance >= DRAW_DISTANCE:
+			continue
+		var point = _road_point(distance)
+		var closeness = 1.0 - point.u
+		var marker_height = max(2.0, 72.0 * pow(closeness, 1.7))
+		var marker_width = max(1.0, 6.5 * pow(closeness, 1.35))
+		for side in [-1.0, 1.0]:
+			var edge_x = point.center + side * point.half * 1.115
+			var base = Vector2(edge_x, point.y)
+			draw_line(
+				base,
+				base - Vector2(0.0, marker_height),
+				Color(0.04, 0.06, 0.10, 0.95),
+				marker_width,
+				true
+			)
+			var lamp_color = accent if (marker_index + int(side)) % 2 == 0 else NEON_CYAN
+			lamp_color.a = 0.32 + speed_ratio * 0.48
+			draw_circle(base - Vector2(0.0, marker_height), marker_width * 1.15, lamp_color)
+			if closeness > 0.52:
+				var trail = (18.0 + 90.0 * closeness) * speed_ratio
+				draw_line(base, base + Vector2(-side * trail * 0.12, trail), Color(lamp_color, 0.18), marker_width, true)
+
+
 func _draw_world_objects(view: Vector2) -> void:
-	var visible = []
-	for object in world_objects:
+	# Objects are sorted once when the course is built. Reverse traversal draws far to near
+	# without allocating and sorting a temporary array every frame.
+	for object_index in range(world_objects.size() - 1, -1, -1):
+		var object: Dictionary = world_objects[object_index]
 		var distance: float = float(object.z) - race_distance
-		if distance > 50.0 and distance < DRAW_DISTANCE:
-			visible.append({"object": object, "distance": distance})
-	visible.sort_custom(func(a, b): return a.distance > b.distance)
-	for item in visible:
-		_draw_projected_object(item.object, item.distance, view)
+		if distance >= DRAW_DISTANCE:
+			continue
+		if distance <= 65.0:
+			continue
+		_draw_projected_object(object, distance, view)
 
 
-func _draw_projected_object(object: Dictionary, distance: float, _view: Vector2) -> void:
+func _draw_projected_object(object: Dictionary, distance: float, view: Vector2) -> void:
 	var point = _road_point(distance)
 	var closeness: float = 1.0 - point.u
 	if closeness <= 0.01:
 		return
+	if point.y > view.y * 0.835:
+		return
 	var kind: String = object.type
 	if kind == "gate":
-		var width = max(24.0, point.half * 2.52)
+		var width = clamp(point.half * 2.22, 24.0, view.x * 0.61)
 		var height = width * float(GATE_TEX.get_height()) / float(GATE_TEX.get_width())
-		var rect = Rect2(point.center - width * 0.5, point.y - height * 0.91, width, height)
+		var rect = Rect2(point.center - width * 0.5, point.y - height * 0.93, width, height)
+		draw_rect(
+			Rect2(point.center - width * 0.45, point.y - height * 0.03, width * 0.90, height * 0.08),
+			Color(0.0, 0.0, 0.0, 0.32)
+		)
 		draw_texture_rect(GATE_TEX, rect, false)
-		if width > 180.0:
-			var label: String = sections[int(object.section)].name
-			_draw_centered(
-				label,
-				Vector2(point.center, point.y - height * 0.56),
-				max(10, int(width * 0.035)),
-				PEARL
-			)
 		return
 	var side: float = float(object.side)
-	var x = point.center + side * point.half * 1.16
+	var shoulder_clearance = 1.34 + closeness * 0.20
+	var x = point.center + side * point.half * shoulder_clearance
 	var tex: Texture2D
-	var base_width = 410.0
+	var base_width = 350.0
+	var maximum_width = min(250.0, view.x * 0.175)
 	if kind == "billboard":
 		tex = SIGN_TEXTURES[int(object.asset)]
 	elif kind == "chevron":
 		tex = CHEVRON_TEX
-		base_width = 215.0
+		base_width = 190.0
+		maximum_width = min(145.0, view.x * 0.105)
 	else:
 		tex = BARRICADE_TEX
-		base_width = 245.0
-	var width = max(10.0, base_width * pow(closeness, 1.18))
+		base_width = 205.0
+		maximum_width = min(155.0, view.x * 0.112)
+	var width = clamp(base_width * pow(closeness, 1.42), 8.0, maximum_width)
 	var height = width * float(tex.get_height()) / float(tex.get_width())
 	var rect = Rect2(x - width * 0.5, point.y - height, width, height)
+	if rect.position.x < 3.0 or rect.end.x > view.x - 3.0:
+		return
+	draw_rect(
+		Rect2(x - width * 0.43, point.y - max(1.0, height * 0.028), width * 0.86, max(1.0, height * 0.06)),
+		Color(0.0, 0.0, 0.0, 0.34)
+	)
 	draw_texture_rect(tex, rect, false)
-	if kind == "billboard" and width > 90.0:
-		draw_line(
-			Vector2(x - width * 0.34, point.y),
-			Vector2(x - width * 0.34, point.y + height * 0.44),
-			Color("17171d"),
-			max(2.0, width * 0.025)
-		)
-		draw_line(
-			Vector2(x + width * 0.34, point.y),
-			Vector2(x + width * 0.34, point.y + height * 0.44),
-			Color("17171d"),
-			max(2.0, width * 0.025)
-		)
 
 
 func _draw_car(view: Vector2) -> void:
@@ -511,61 +645,77 @@ func _draw_car(view: Vector2) -> void:
 		and nitro > 0.0
 		and speed > 120.0
 	)
-	var tex: Texture2D = CAR_MUTANT
-	var width = clamp(view.x * 0.205, 170.0, 292.0)
-	var height = width * float(tex.get_height()) / float(tex.get_width())
 	var turn_amount = clamp(steer_visual, -1.0, 1.0)
+	var pose_index = 2
+	if turn_amount < -0.58:
+		pose_index = 0
+	elif turn_amount < -0.16:
+		pose_index = 1
+	elif turn_amount > 0.58:
+		pose_index = 4
+	elif turn_amount > 0.16:
+		pose_index = 3
+	var tex: Texture2D = CAR_POSES[pose_index]
+	var width = clamp(view.x * 0.215, 180.0, 316.0)
+	var height = width * float(tex.get_height()) / float(tex.get_width())
 	var control = _control_state()
 	var drifting = bool(control.brake) and abs(turn_amount) > 0.15 and speed > 150.0
-	var turn_force = turn_amount * (1.48 if drifting else 1.0)
-	var car_x = view.x * 0.5 + road_x * view.x * 0.27 + turn_force * width * 0.035
+	var turn_force = turn_amount * (1.42 if drifting else 1.0)
+	var car_x = view.x * 0.5 + road_x * view.x * 0.265 + turn_force * width * 0.030
 	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.25)
-	var suspension_bob = sin(race_distance * 0.043) * speed_ratio * 2.6
-	var speed_rattle = sin(race_distance * 0.129) * max(0.0, speed_ratio - 0.72) * 1.8
-	var car_y = view.y * 0.925 + suspension_bob + speed_rattle
+	var suspension_bob = sin(race_distance * 0.052) * speed_ratio * 3.0
+	var speed_rattle = sin(race_distance * 0.151) * max(0.0, speed_ratio - 0.70) * 2.3
+	var launch_squat = boost_visual * height * 0.022
+	var car_y = view.y * 0.935 + suspension_bob + speed_rattle + launch_squat
+	var shadow_half = width * (0.44 + speed_ratio * 0.015)
+	var shadow_y = car_y - height * 0.020
+	var shadow = PackedVector2Array(
+		[
+			Vector2(car_x - shadow_half, shadow_y),
+			Vector2(car_x - shadow_half * 0.72, shadow_y + height * 0.085),
+			Vector2(car_x + shadow_half * 0.72, shadow_y + height * 0.085),
+			Vector2(car_x + shadow_half, shadow_y)
+		]
+	)
+	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.42))
 	if boosting:
 		draw_circle(
 			Vector2(car_x, car_y - height * 0.05), width * 0.38, Color(1.0, 0.1, 0.62, 0.16)
 		)
 	var rect = Rect2(car_x - width * 0.5, car_y - height, width, height)
-	var road_vibration = sin(race_distance * 0.071) * speed_ratio * 0.006
-	var turn_scale = Vector2(1.0 - abs(turn_force) * 0.075, 1.0 + abs(turn_force) * 0.018)
-	draw_set_transform(rect.get_center(), turn_force * -0.092 + road_vibration, turn_scale)
+	var road_vibration = sin(race_distance * 0.089) * speed_ratio * 0.005
+	var turn_scale = Vector2(1.0 - abs(turn_force) * 0.025, 1.0 + abs(turn_force) * 0.012)
+	turn_scale *= 1.0 + camera_impact * 0.025
+	draw_set_transform(rect.get_center(), turn_force * -0.032 + road_vibration, turn_scale)
 	if boosting:
 		_draw_mutant_boost(width, height)
 	draw_texture_rect(tex, Rect2(-rect.size * 0.5, rect.size), false)
-	_draw_spinning_wheels(width, height, speed_ratio)
+	_draw_spinning_wheels(width, height, speed_ratio, turn_force)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-func _draw_spinning_wheels(width: float, height: float, speed_ratio: float) -> void:
+func _draw_spinning_wheels(width: float, height: float, speed_ratio: float, turn_force: float) -> void:
 	if state != "race" or speed < 8.0:
 		return
-	var spin = fposmod(race_distance * 0.022, 1.0)
-	var tire_centers = [-width * 0.445, width * 0.445]
-	var tire_half_width = width * 0.043
-	var tire_top = -height * 0.015
-	var tire_bottom = height * 0.43
-	for side_index in range(tire_centers.size()):
-		var tire_x: float = tire_centers[side_index]
-		for tread_index in range(7):
-			var phase = fposmod(float(tread_index) / 7.0 + spin, 1.0)
-			var tread_y = lerp(tire_top, tire_bottom, phase)
-			var edge_fade = sin(phase * PI)
-			var tread_color = NEON_CYAN if (tread_index + side_index) % 2 == 0 else NEON_PINK
-			tread_color.a = (0.10 + speed_ratio * 0.34) * edge_fade
-			draw_line(
-				Vector2(tire_x - tire_half_width, tread_y - height * 0.007),
-				Vector2(tire_x + tire_half_width, tread_y + height * 0.007),
-				tread_color,
-				max(1.0, width * 0.006),
-				true
-			)
-		var contact_y = height * 0.47
-		var streak = width * (0.035 + speed_ratio * 0.07)
+	var spin_angle = race_distance * 0.045
+	var wheel_y = height * 0.315
+	var wheel_centers = [Vector2(-width * 0.385, wheel_y), Vector2(width * 0.385, wheel_y)]
+	for wheel_index in range(wheel_centers.size()):
+		var wheel_center: Vector2 = wheel_centers[wheel_index]
+		var outer_side = sign(turn_force) == (-1.0 if wheel_index == 0 else 1.0)
+		var radius = width * (0.070 + (0.008 if outer_side else 0.0))
+		var wheel_color = NEON_PINK if wheel_index == 0 else NEON_CYAN
+		wheel_color.a = 0.20 + speed_ratio * 0.34
+		draw_arc(wheel_center, radius, spin_angle, spin_angle + PI * 1.25, 18, wheel_color, max(1.0, width * 0.009), true)
+		for spoke_index in range(3):
+			var spoke_angle = spin_angle + float(spoke_index) * TAU / 3.0
+			var spoke_end = wheel_center + Vector2(cos(spoke_angle), sin(spoke_angle)) * radius * 0.78
+			draw_line(wheel_center, spoke_end, Color(wheel_color, 0.42), max(1.0, width * 0.005), true)
+		var contact_y = height * 0.455
+		var streak = width * (0.025 + speed_ratio * 0.090)
 		draw_line(
-			Vector2(tire_x - streak, contact_y),
-			Vector2(tire_x + streak, contact_y),
+			Vector2(wheel_center.x - streak, contact_y),
+			Vector2(wheel_center.x + streak, contact_y),
 			Color(0.25, 0.88, 1.0, 0.10 + speed_ratio * 0.18),
 			max(1.0, width * 0.008),
 			true
