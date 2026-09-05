@@ -1,0 +1,29 @@
+TTD DEATH CIRCUIT // OUTRUN ASSAULT v2.0
+
+GITHUB UPDATE
+1. Extract the ZIP.
+2. Open the extracted TTD-Death-Circuit-Xogot folder.
+3. Upload the CONTENTS of that folder to the root of Hardcase87/TTD-Death-Circuit.
+4. Replace existing files when GitHub asks.
+5. Confirm project.godot, main.tscn, scripts/ and assets/ are at the repository root.
+
+Do not upload the ZIP itself into the repository.
+
+XOGOT PULL
+https://github.com/Hardcase87/TTD-Death-Circuit.git
+
+After pulling, open project.godot, allow imports to finish, open main.tscn and Run.
+
+NEW v2.0 FILES
+- assets/vehicles/mutant-maniac-hard-left.png
+- assets/vehicles/mutant-maniac-soft-left.png
+- assets/vehicles/mutant-maniac-center.png
+- assets/vehicles/mutant-maniac-soft-right.png
+- assets/vehicles/mutant-maniac-hard-right.png
+
+REPLACED v2.0 FILES
+- scripts/main.gd
+- README.md
+
+If Xogot shows an old cached parse error after the GitHub pull, close the project,
+reopen it from project.godot and allow the import scan to complete before Run.
