@@ -1,4 +1,19 @@
-# TTD Death Circuit — Outrun Assault v2.0
+# TTD Death Circuit — Outrun Assault test build
+
+## Xogot traffic and skyline pass
+
+This test build adds six TTD rival/traffic sprites from the browser asset set
+to the Godot road. Passing cars scores points, close passes earn near-miss
+bonuses, collisions slow the car, and nitro can terminate a rival. It also
+brings the district skyline into the vanishing point and places more signs
+along the route. The browser `index.html` is a separate build and was not
+changed by this pass.
+
+Import `project.godot` in Xogot and run `main.tscn`. Start, hold GO, steer
+around traffic, and use NITRO above 120 speed to test the new interactions.
+
+This is a visual/playability experiment. It has not been run in Xogot here;
+keep the existing repository build until the new one passes an on-device test.
 
 Compatibility revision 2.0: authored arcade road, five-pose Mutant Maniac, optic-flow speed system and disciplined world dressing.
 
