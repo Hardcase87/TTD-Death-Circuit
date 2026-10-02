@@ -41,6 +41,15 @@ const SIGN_TEXTURES = [
 ]
 const CHEVRON_TEX = preload("res://assets/signs/road-chevron.webp")
 const BARRICADE_TEX = preload("res://assets/signs/road-barricade.webp")
+const TRAFFIC_TEX = [
+	preload("res://assets/death-circuit-v8/enforcer.webp"),
+	preload("res://assets/death-circuit-v8/neon-runner.webp"),
+	preload("res://assets/death-circuit-v8/military-interceptor.webp"),
+	preload("res://assets/death-circuit-v8/credit-viper.webp"),
+	preload("res://assets/death-circuit-v8/nutri-haul.webp"),
+	preload("res://assets/death-circuit-v8/alien-drifter.webp")
+]
+const TRAFFIC_LANES = [-0.52, 0.0, 0.52, -0.20, 0.30]
 
 # Each Vector3 is local section progress, signed corner force and hill force.
 # Long holds create committed arcade bends instead of generic sine-wave wandering.
@@ -156,6 +165,13 @@ var section_starts = PackedFloat32Array()
 var track_length = 0.0
 var map_points = PackedVector2Array()
 var world_objects = []
+var hazards: Array[Dictionary] = []
+var traffic: Array[Dictionary] = []
+var traffic_passed = 0
+var score = 0
+var crash_cooldown = 0.0
+var event_text = ""
+var event_timer = 0.0
 
 var race_distance = 0.0
 var speed = 0.0
@@ -182,6 +198,8 @@ var engine_mix_rate = 22050.0
 func _ready() -> void:
 	_build_track()
 	_build_world_objects()
+	_build_hazards()
+	_build_traffic()
 	_build_minimap()
 	_setup_audio()
 	set_process(true)
@@ -203,7 +221,7 @@ func _build_world_objects() -> void:
 		var length: float = sections[index].length
 		if index > 0:
 			world_objects.append({"z": start, "type": "gate", "side": 0.0, "section": index})
-		var prop_count = 11
+		var prop_count = 24
 		var usable_start = 1750.0
 		var usable_length = length - 3200.0
 		for slot in range(prop_count):
@@ -231,6 +249,80 @@ func _build_world_objects() -> void:
 
 func _sort_world_objects(a: Dictionary, b: Dictionary) -> bool:
 	return float(a.z) < float(b.z)
+
+
+func _build_hazards() -> void:
+	hazards.clear()
+	# One avoidable obstruction per sector. Keep the first and last stretch of each
+	# sector clear so every checkpoint gate has a readable approach.
+	for section_index in range(sections.size()):
+		var start: float = section_starts[section_index]
+		var length: float = float(sections[section_index].length)
+		for slot in range(3):
+			var lane: float = -0.53 if (slot + section_index) % 2 == 0 else 0.53
+			hazards.append({"z": start + 3100.0 + float(slot) * (length - 6200.0) / 2.0,
+				"lane": lane, "hit": false})
+
+
+func _build_traffic() -> void:
+	traffic.clear()
+	var z: float = 1850.0
+	var index: int = 0
+	while z < track_length - 800.0:
+		var lane: float = float(TRAFFIC_LANES[index % TRAFFIC_LANES.size()])
+		traffic.append({"z": z, "lane": lane, "speed": 120.0 + float(index % 4) * 29.0,
+			"tex": index % TRAFFIC_TEX.size(), "passed": false})
+		z += 1550.0 + float(index % 4) * 230.0
+		index += 1
+
+
+func _traffic_step(delta: float, boosting: bool) -> void:
+	crash_cooldown = maxf(0.0, crash_cooldown - delta)
+	event_timer = maxf(0.0, event_timer - delta)
+	for car in traffic:
+		if car.passed:
+			continue
+		car.z = minf(track_length - 100.0, float(car.z) + float(car.speed) * delta)
+		var distance: float = float(car.z) - race_distance
+		var separation: float = absf(float(car.lane) - road_x)
+		if distance < 95.0 and distance > -35.0 and separation < 0.27 and crash_cooldown <= 0.0:
+			car.passed = true
+			traffic_passed += 1
+			if boosting:
+				score += 1500
+				event_text = "RIVAL TERMINATED  //  +1500"
+			else:
+				speed *= 0.42
+				camera_impact = 1.0
+				event_text = "IMPACT  //  KEEP DRIVING"
+			crash_cooldown = 0.9
+			event_timer = 1.4
+		elif distance < -95.0:
+			car.passed = true
+			traffic_passed += 1
+			if separation < 0.54:
+				score += 650
+				event_text = "NEAR MISS  //  +650"
+				event_timer = 1.2
+			else:
+				score += 200
+	for hazard in hazards:
+		if hazard.hit:
+			continue
+		var hazard_distance: float = float(hazard.z) - race_distance
+		if hazard_distance < -80.0:
+			hazard.hit = true
+		elif hazard_distance < 90.0 and absf(float(hazard.lane) - road_x) < 0.27 and crash_cooldown <= 0.0:
+			hazard.hit = true
+			if boosting:
+				score += 900
+				event_text = "BARRICADE OBLITERATED  //  +900"
+			else:
+				speed *= 0.33
+				camera_impact = 1.0
+				event_text = "BARRICADE IMPACT  //  NO REFUNDS"
+			crash_cooldown = 0.9
+			event_timer = 1.4
 
 
 func _build_minimap() -> void:
@@ -330,6 +422,7 @@ func _process(delta: float) -> void:
 		speed = move_toward(speed, MAX_SPEED * 0.50, 190.0 * delta)
 
 	_racing_step(delta)
+	_traffic_step(delta, boosting)
 	queue_redraw()
 
 
@@ -396,12 +489,14 @@ func _road_point(distance: float) -> Dictionary:
 	var info = _track_info(min(race_distance + distance, track_length - 1.0))
 	var y = lerp(bottom, horizon, pow(u, lerp(0.76, 0.66, speed_ratio)))
 	y -= float(info.hill) * sin(u * PI) * view.y * 0.255
-	var near_width = view.x * (0.475 + speed_ratio * 0.035 + boost_visual * 0.018)
+	var near_width = view.x * (0.420 + speed_ratio * 0.025 + boost_visual * 0.012)
 	var half_width = lerp(near_width, view.x * 0.008, pow(u, 0.76))
 	var bend = _integrated_curve(distance) * pow(distance / DRAW_DISTANCE, 1.35)
 	var steering_camera = steer_visual * speed_ratio * view.x * 0.020
 	var corner_look = float(info.curve) * speed_ratio * view.x * 0.018
-	var center = view.x * 0.5 - road_x * view.x * 0.255 + bend * view.x * 0.43
+	# road_x and every traffic lane use the same road-half-width coordinate.
+	# Fade camera translation with depth so the vanishing point stays stable.
+	var center = view.x * 0.5 - road_x * half_width + bend * view.x * 0.43
 	center += steering_camera + corner_look
 	return {"center": center, "y": y, "half": half_width, "u": u, "info": info}
 
@@ -413,6 +508,8 @@ func _draw() -> void:
 	_draw_speed_effects(view)
 	_draw_roadside_flow(view)
 	_draw_world_objects(view)
+	_draw_hazards(view)
+	_draw_traffic(view)
 	_draw_car(view)
 	_draw_hud(view)
 	_draw_touch_controls(view)
@@ -428,27 +525,31 @@ func _draw_background(view: Vector2) -> void:
 	var info = _track_info(race_distance)
 	var section: Dictionary = info.section
 	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.22)
-	var horizon_h = view.y * lerp(0.555, 0.515, speed_ratio)
+	var horizon_h = view.y * lerp(0.48, 0.43, speed_ratio)
 	var horizon_width = view.x * 1.14
 	var corner_pan = float(info.curve) * view.x * 0.020
 	var horizon_x = -view.x * 0.07 - road_x * view.x * 0.018 - corner_pan
 	var horizon_y = -speed_ratio * view.y * 0.010
 	var horizon_rect = Rect2(horizon_x, horizon_y, horizon_width, horizon_h)
 	var current_horizon: Texture2D = DISTRICT_HORIZONS[current_section]
+	# Crop the painting's water/foreground so the skyline meets the road.
+	var source_rect = Rect2(0.0, 0.0, current_horizon.get_width(), current_horizon.get_height() * 0.78)
 	var tint: Color = Color.WHITE.lerp(section.accent, 0.07)
 	if background_transition > 0.0 and transition_from_section != current_section:
 		var old_horizon: Texture2D = DISTRICT_HORIZONS[transition_from_section]
-		draw_texture_rect(old_horizon, horizon_rect, false, Color.WHITE)
+		var old_source = Rect2(0.0, 0.0, old_horizon.get_width(), old_horizon.get_height() * 0.78)
+		draw_texture_rect_region(old_horizon, horizon_rect, old_source, Color.WHITE)
 		var reveal = 1.0 - clamp(background_transition, 0.0, 1.0)
-		draw_texture_rect(current_horizon, horizon_rect, false, Color(tint, reveal))
+		draw_texture_rect_region(current_horizon, horizon_rect, source_rect, Color(tint, reveal))
 	else:
-		draw_texture_rect(current_horizon, horizon_rect, false, tint)
+		draw_texture_rect_region(current_horizon, horizon_rect, source_rect, tint)
 	draw_rect(Rect2(0.0, 0.0, view.x, horizon_h), Color(section.accent, 0.055))
 
 
 func _draw_road(view: Vector2) -> void:
 	var current = _track_info(race_distance)
-	draw_rect(Rect2(0.0, view.y * 0.39, view.x, view.y * 0.61), current.section.ground)
+	var far_horizon: float = float(_road_point(DRAW_DISTANCE).y)
+	draw_rect(Rect2(0.0, far_horizon, view.x, view.y - far_horizon), current.section.ground)
 	for i in range(ROAD_SLICES - 1, -1, -1):
 		var near_d = DRAW_DISTANCE * pow(float(i) / float(ROAD_SLICES), 2.0)
 		var far_d = DRAW_DISTANCE * pow(float(i + 1) / float(ROAD_SLICES), 2.0)
@@ -596,11 +697,10 @@ func _draw_projected_object(object: Dictionary, distance: float, view: Vector2) 
 	var closeness: float = 1.0 - point.u
 	if closeness <= 0.01:
 		return
-	if point.y > view.y * 0.835:
-		return
 	var kind: String = object.type
 	if kind == "gate":
-		var width = clamp(point.half * 2.22, 24.0, view.x * 0.61)
+		# The gate remains in view until the car actually crosses its world position.
+		var width = clamp(point.half * 2.44, 24.0, view.x * 1.75)
 		var height = width * float(GATE_TEX.get_height()) / float(GATE_TEX.get_width())
 		var rect = Rect2(point.center - width * 0.5, point.y - height * 0.93, width, height)
 		draw_rect(
@@ -608,6 +708,8 @@ func _draw_projected_object(object: Dictionary, distance: float, view: Vector2) 
 			Color(0.0, 0.0, 0.0, 0.32)
 		)
 		draw_texture_rect(GATE_TEX, rect, false)
+		return
+	if point.y > view.y * 0.97:
 		return
 	var side: float = float(object.side)
 	var shoulder_clearance = 1.34 + closeness * 0.20
@@ -637,6 +739,45 @@ func _draw_projected_object(object: Dictionary, distance: float, view: Vector2) 
 	draw_texture_rect(tex, rect, false)
 
 
+func _draw_hazards(view: Vector2) -> void:
+	for hazard_index in range(hazards.size() - 1, -1, -1):
+		var hazard: Dictionary = hazards[hazard_index]
+		if hazard.hit:
+			continue
+		var distance: float = float(hazard.z) - race_distance
+		if distance < 65.0 or distance > DRAW_DISTANCE * 0.78:
+			continue
+		var point: Dictionary = _road_point(distance)
+		var closeness: float = 1.0 - float(point.u)
+		var width: float = clampf(220.0 * pow(closeness, 1.4), 10.0, view.x * 0.17)
+		var height: float = width * float(BARRICADE_TEX.get_height()) / float(BARRICADE_TEX.get_width())
+		var x: float = float(point.center) + float(hazard.lane) * float(point.half)
+		var y: float = float(point.y)
+		draw_rect(Rect2(x - width * 0.42, y - height * 0.04, width * 0.84, height * 0.08), Color(0, 0, 0, 0.45))
+		draw_texture_rect(BARRICADE_TEX, Rect2(x - width * 0.5, y - height, width, height), false)
+
+
+func _draw_traffic(view: Vector2) -> void:
+	# Rear-view TTD rivals from the browser build, projected onto the same road.
+	for index in range(traffic.size() - 1, -1, -1):
+		var car: Dictionary = traffic[index]
+		if car.passed:
+			continue
+		var distance: float = float(car.z) - race_distance
+		if distance < 95.0 or distance > DRAW_DISTANCE * 0.78:
+			continue
+		var point: Dictionary = _road_point(distance)
+		var closeness: float = 1.0 - float(point.u)
+		var tex: Texture2D = TRAFFIC_TEX[int(car.tex)]
+		var width: float = clampf(220.0 * pow(closeness, 1.45), 12.0, 200.0)
+		var height: float = width * float(tex.get_height()) / float(tex.get_width())
+		var x: float = float(point.center) + float(car.lane) * float(point.half)
+		var y: float = float(point.y)
+		var shadow = Rect2(x - width * 0.37, y - height * 0.06, width * 0.74, height * 0.12)
+		draw_rect(shadow, Color(0.0, 0.0, 0.0, 0.42))
+		draw_texture_rect(tex, Rect2(x - width * 0.5, y - height, width, height), false)
+
+
 func _draw_car(view: Vector2) -> void:
 	var keyboard_boost = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_SHIFT)
 	var boosting = (
@@ -661,7 +802,8 @@ func _draw_car(view: Vector2) -> void:
 	var control = _control_state()
 	var drifting = bool(control.brake) and abs(turn_amount) > 0.15 and speed > 150.0
 	var turn_force = turn_amount * (1.42 if drifting else 1.0)
-	var car_x = view.x * 0.5 + road_x * view.x * 0.265 + turn_force * width * 0.030
+	# The camera follows the player. The road and traffic shift relative to the car.
+	var car_x = view.x * 0.5 + turn_force * width * 0.030
 	var speed_ratio = clamp(speed / MAX_SPEED, 0.0, 1.25)
 	var suspension_bob = sin(race_distance * 0.052) * speed_ratio * 3.0
 	var speed_rattle = sin(race_distance * 0.151) * max(0.0, speed_ratio - 0.70) * 2.3
@@ -761,6 +903,9 @@ func _draw_hud(view: Vector2) -> void:
 	_draw_text("%03d" % kph, Vector2(view.x - 270, view.y - 55), 42, HOT_YELLOW)
 	_draw_text("KM/H", Vector2(view.x - 170, view.y - 55), 15, NEON_CYAN)
 	_draw_text("TIME %s" % _format_time(elapsed), Vector2(550, 48), 18, PEARL)
+	_draw_text("SCORE %06d  //  PASSED %02d" % [score, traffic_passed], Vector2(550, 100), 15, HOT_YELLOW)
+	if event_timer > 0.0:
+		_draw_centered(event_text, Vector2(view.x * 0.5, view.y * 0.18), 25, NEON_GREEN)
 	_draw_text(
 		"RUN %02d%%" % int(race_distance / track_length * 100.0),
 		Vector2(550, 76),
@@ -924,6 +1069,12 @@ func _start_race() -> void:
 	speed = 0.0
 	road_x = 0.0
 	nitro = 100.0
+	score = 0
+	traffic_passed = 0
+	crash_cooldown = 0.0
+	event_timer = 0.0
+	_build_traffic()
+	_build_hazards()
 	elapsed = 0.0
 	current_section = 0
 	previous_section = -1
