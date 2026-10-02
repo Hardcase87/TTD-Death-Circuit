@@ -1,5 +1,15 @@
 # TTD Death Circuit — Outrun Assault test build
 
+## v2.1 handling and hazard repair
+
+- Corrected the camera/road/car coordinate mismatch: the player stays centered while the road, rivals, and obstacles share the same lane scale.
+- Checkpoint gates remain visible through the drive-through instead of disappearing before the car reaches them.
+- Added 18 avoidable road barricades with impact slowdown or nitro destruction bonuses. Gate approaches stay clear.
+- Roadside signs persist closer to the camera; billboards remain outside the driving lanes.
+- The browser `index.html` is still the separate legacy build. Test `main.tscn` in Xogot.
+
+This is a candidate build. It has not been run on the user's iPad/Xogot, so import and test before replacing the known playable version.
+
 ## Xogot traffic and skyline pass
 
 This test build adds six TTD rival/traffic sprites from the browser asset set
